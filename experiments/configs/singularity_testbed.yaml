@@ -1,0 +1,7 @@
+# --contain hides the image's /root/.bashrc, so `conda activate testbed` (via BASH_ENV) never runs. Put testbed first on PATH.
+environment:
+  environment_class: singularity
+  env:
+    PATH: /opt/miniconda3/envs/testbed/bin:/opt/miniconda3/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    CONDA_PREFIX: /opt/miniconda3/envs/testbed
+    CONDA_DEFAULT_ENV: testbed

@@ -12,6 +12,7 @@ from datasets import load_dataset
 
 from minisweagent.config import get_config_from_spec
 from minisweagent.run.benchmarks.swebench import DEFAULT_CONFIG_FILE, get_sb_environment
+from minisweagent.utils.serialize import recursive_merge
 from orchestrator.artifacts import ArtifactState, Evidence, Hypothesis, Patch, TestResult
 from orchestrator.events import EventQueue, derive_event
 from orchestrator.scheduler import Budget, Scheduler
@@ -28,6 +29,8 @@ def main(
 ):
     row = next(r for r in load_dataset("princeton-nlp/SWE-bench_Lite", split="dev") if r["instance_id"] == instance)
     config = get_config_from_spec(str(DEFAULT_CONFIG_FILE))
+    if env_class == "singularity":
+        config = recursive_merge(config, get_config_from_spec("experiments/configs/singularity_testbed.yaml"))
     config["environment"] |= {"environment_class": env_class, "timeout": 300}
     env = get_sb_environment(config, row)
     out = out / instance
@@ -49,6 +52,7 @@ def main(
 
     results: dict[str, bool] = {}
 
+    results["testbed_env_active"] = sh("python -c 'import pytest, sys; print(sys.prefix)'").strip().endswith("testbed")
     head = sh("git rev-parse HEAD").strip()
     results["checkout_at_base_commit"] = head == row["base_commit"]
     results["clean_tree"] = sh("git status --porcelain").strip() == ""
@@ -100,6 +104,7 @@ def main(
     state.commit(TestResult("t_p2_repro", "p2", "r2", "repro", repro_test, code, path))
     trace.append(step())
     results["bad_patch_check_fails"] = code != 0
+    results["bad_patch_fails_for_the_right_reason"] = "stage0 deliberate break" in Path(path).read_text()
 
     sh("git checkout -- .")
     state.save(out / "state.json")
