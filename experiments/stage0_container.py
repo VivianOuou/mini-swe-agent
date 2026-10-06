@@ -59,7 +59,10 @@ def main(
 
     files = sh("git ls-files").split()
     source = next(f for f in files if f.endswith(".py") and "test" not in f and f.startswith("src/"))
-    repro_test, regression_test = [f for f in files if f.endswith("_test.py")][:2]
+    repro_test, regression_test = [f for f in files if f.startswith("test/") and f.endswith("_test.py")][:2]
+
+    baseline = {n: check(f"base_{n}", t)[0] for n, t in [("repro", repro_test), ("regression", regression_test)]}
+    results["baseline_checks_pass_on_clean_base"] = all(c == 0 for c in baseline.values())
 
     sh(f"echo '# stage0 probe' >> {source}")
     patch = sh("git diff")
