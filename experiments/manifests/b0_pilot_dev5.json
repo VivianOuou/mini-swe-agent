@@ -1,0 +1,49 @@
+{
+  "purpose": "B0 pilot: native mini, 3 candidate worker models, first 5 Lite dev instances in original order",
+  "dataset": "princeton-nlp/SWE-bench_Lite",
+  "split": "dev",
+  "slice": "0:5",
+  "eval_dataset": "SWE-bench/SWE-bench_Lite",
+  "mini_commit": "9d846a45256a62a4ef611df8d07570e6f8f58ebb",
+  "instances": [
+    {
+      "instance_id": "sqlfluff__sqlfluff-1625",
+      "base_commit": "14e1a23a3166b9a645a16de96f694c77a5d4abb7"
+    },
+    {
+      "instance_id": "sqlfluff__sqlfluff-2419",
+      "base_commit": "f1dba0e1dd764ae72d67c3d5e1471cf14d3db030"
+    },
+    {
+      "instance_id": "sqlfluff__sqlfluff-1733",
+      "base_commit": "a1579a16b1d8913d9d7c7d12add374a290bcc78c"
+    },
+    {
+      "instance_id": "sqlfluff__sqlfluff-1517",
+      "base_commit": "304a197829f98e7425a46d872ada73176137e5ae"
+    },
+    {
+      "instance_id": "sqlfluff__sqlfluff-1763",
+      "base_commit": "a10057635e5b2559293a676486f0b730981f037a"
+    }
+  ],
+  "models": [
+    {
+      "name": "openai/gpt-4.1-2025-04-14",
+      "model_class": "litellm"
+    },
+    {
+      "name": "openai/gpt-5.4-mini-2026-03-17",
+      "model_class": "litellm_response"
+    },
+    {
+      "name": "openai/gpt-5.5-2026-04-23",
+      "model_class": "litellm_response"
+    }
+  ],
+  "agent": {
+    "step_limit": 80,
+    "cost_limit_usd": 2
+  },
+  "environment": "singularity + experiments/configs/singularity_testbed.yaml"
+}
