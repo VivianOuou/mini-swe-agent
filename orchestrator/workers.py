@@ -9,10 +9,12 @@ SOURCE_EDIT_MODES = {Mode.PATCH}
 
 
 def message_tokens(message: dict) -> tuple[int, bool]:
-    """Returns (tokens, estimated). Falls back to a chars/4 estimate when the provider reports no usage."""
-    usage = (message.get("extra", {}).get("response") or {}).get("usage")
+    """Returns (tokens, estimated). Chat API: extra.response.usage (prompt/completion_tokens). Responses API: top-level
+    usage (input/output_tokens). Falls back to a chars/4 estimate when the provider reports no usage."""
+    usage = message.get("usage") or (message.get("extra", {}).get("response") or {}).get("usage")
     if isinstance(usage, dict):
-        return usage["prompt_tokens"] + usage["completion_tokens"], False
+        tokens_in = usage.get("input_tokens", usage.get("prompt_tokens", 0))
+        return tokens_in + usage.get("output_tokens", usage.get("completion_tokens", 0)), False
     return len(str(message.get("content") or "")) // 4, True
 
 

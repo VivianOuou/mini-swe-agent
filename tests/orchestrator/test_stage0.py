@@ -154,3 +154,11 @@ def test_format_errors_and_missing_usage_are_still_charged():
         model.query([])
     model.query([])
     assert (budget.tokens, budget.calls, budget.estimated_calls) == (200, 2, 1)
+
+
+def test_responses_api_usage_is_read_from_the_top_level():
+    out = make_output("ok", [{"command": "true"}])
+    out["usage"] = {"input_tokens": 900, "output_tokens": 100, "output_tokens_details": {"reasoning_tokens": 40}}
+    budget = Budget()
+    BudgetedModel(DeterministicModel(outputs=[out]), budget).query([])
+    assert (budget.tokens, budget.estimated_calls) == (1000, 0)
