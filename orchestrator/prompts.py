@@ -16,6 +16,8 @@ Put any script you write (reproduction scripts, probes) under /testbed/.edac/ - 
 Never modify tests or configuration files (setup.py, setup.cfg, pyproject.toml, tox.ini).
 Never run git commit, checkout, reset, stash or branch commands: the system tracks changes against the original commit itself.
 Files under .edac/ that the acceptance checks depend on are frozen by the system; edits to them are undone.
+You have at most {{ max_calls }} tool calls in this session, and the two handoff commands count: stop exploring in time and
+hand off before you run out, or the whole session is wasted.
 Your response MUST contain at least one bash tool call. When you are done, you MUST hand off with the exact two-step
 sequence below, as SEPARATE commands. After the second command you cannot do anything else.
 
@@ -79,10 +81,10 @@ INSTANCE_TEMPLATE = (
 )
 
 
-def render_instance_template(mode: Mode, has_repro: bool) -> str:
+def render_instance_template(mode: Mode, has_repro: bool, max_calls: int) -> str:
     """Instance template with the mode rules baked in; {{task}} and {{state_view}} stay for the agent to fill."""
-    rules = Template(_RULES[mode], undefined=StrictUndefined).render(has_repro=has_repro)
-    return INSTANCE_TEMPLATE.replace("{{ mode_rules }}", rules)
+    rules = Template(_RULES[mode], undefined=StrictUndefined).render(has_repro=has_repro, max_calls=max_calls)
+    return INSTANCE_TEMPLATE.replace("{{ mode_rules }}", rules).replace("{{ max_calls }}", str(max_calls))
 
 
 def _tail(path: str, n: int = 40) -> str:

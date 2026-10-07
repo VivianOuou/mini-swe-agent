@@ -26,7 +26,7 @@ MODE_FOR_EVENT = {
 class Budget:
     max_tokens: int = 100_000
     max_calls: int = 80
-    max_activation_calls: int = 12
+    max_activation_calls: int = 20
     reserve_tokens: int = 4096
     """Completion allowance that must still fit under max_tokens before another call is allowed."""
     tokens: int = 0

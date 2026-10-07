@@ -111,9 +111,11 @@ def run_task(
         code = run_check(env, cmd, log, check_timeout)
         stats["batches"] += 1
         if code in INVALID_REPRO_CODES or SETUP_ERROR.search(log.read_text()):
+            tail = "\n".join(log.read_text().splitlines()[-12:])
             raise HandoffError(
                 f"repro_cmd does not reproduce the issue on the unmodified repository (exit code {code}): it must fail "
-                "because of the issue, not because it passed, timed out or could not run; keep scripts under .edac/"
+                f"because of the issue, not because it passed, timed out or could not run; keep scripts under .edac/. "
+                f"Its output tail was:\n{tail}"
             )
         frozen.update(snapshot_edac(env))
         return Evidence(
@@ -128,12 +130,13 @@ def run_task(
         act, ref = activate(mode)
         contain(mode, before)
         commands, records, data, raw, last, errors = act["commands"], [], {}, act["submission"], act, []
+        dropped: list[str] = []
         for attempt in range(2):
             try:
                 if not raw:
                     raise HandoffError(f"no handoff submitted (exit status {last['exit_status'] or 'unknown'})")
                 data = parse_handoff(raw)
-                records = bind_handoff(data, state, commands, env, ref)
+                records, dropped = bind_handoff(data, state, commands, env, ref)
                 if "repro" not in state.checks:
                     records.append(
                         validate_repro(data, len(state.evidence) + sum(isinstance(r, Evidence) for r in records) + 1)
@@ -153,6 +156,8 @@ def run_task(
         if error := " -> after repair: ".join(errors):
             state.errors.append(f"{mode.value}: {error}")
         elif records:
+            if dropped:
+                state.errors.append(f"{mode.value}: dropped unverifiable claims: {dropped}")
             if "repro" not in state.checks:
                 state.checks["repro"] = data["repro_cmd"].strip()
             state.unresolved_questions = [str(q) for q in data.get("unresolved") or []]

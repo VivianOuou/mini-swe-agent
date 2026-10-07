@@ -1,5 +1,6 @@
 """Worker-side plumbing: a model wrapper that charges the task-level budget on every call, whatever the mode."""
 
+import difflib
 import json
 import re
 import shlex
@@ -85,12 +86,21 @@ def parse_handoff(text: str) -> dict:
     return data
 
 
+SIMILARITY = 0.85
+"""Minimum similarity to accept a paraphrased citation. Measured on real mini runs: misquoted-but-real commands scored
+0.95+, never-executed or half-invented ones 0.64 and below, fabricated controls 0.52 and below."""
+
+
+def _bare(cmd: str) -> str:
+    return re.sub(r"^cd\s+\S+\s*&&\s*", "", cmd.strip())
+
+
 def executed_index(cmd: str, commands: list[str]) -> int | None:
     """Index of the executed command that vouches for `cmd`, or None.
 
-    Workers paraphrase a little (dropping `pwd &&`, re-quoting), so `cmd` is split on && and ; and every non-trivial
-    part must occur in a command that really ran. A part nobody ran, or a command that merely writes or submits the
-    handoff file, never counts.
+    First every non-trivial && / ; part of `cmd` must occur verbatim in a command that really ran; failing that, `cmd`
+    must be near-identical (SIMILARITY) to one that did. A command that merely writes or submits the handoff file never
+    counts, and a part nobody ran never passes.
     """
     real = [(k, c) for k, c in enumerate(commands) if "handoff.json" not in c]
     parts = [p for p in (x.strip() for x in re.split(r"&&|;", cmd)) if p and not re.fullmatch(r"cd\s+\S+", p)]
@@ -98,21 +108,32 @@ def executed_index(cmd: str, commands: list[str]) -> int | None:
     if not long_parts:
         return next((k for k, c in reversed(real) if c.strip() == cmd and cmd), None)
     hits = [next((k for k, c in reversed(real) if p in c), None) for p in long_parts]
-    return None if None in hits else max(hits)
+    if None not in hits:
+        return max(hits)
+    ratio, best = max(
+        ((difflib.SequenceMatcher(None, _bare(cmd), _bare(c)).ratio(), k) for k, c in real), default=(0, None)
+    )
+    return best if ratio >= SIMILARITY else None
 
 
-def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, traj_ref: str) -> list:
-    """Turns an Explore/Diagnose handoff into Evidence + Hypothesis records. Every claim is checked against what
-    really happened: cited commands must have been executed (commands that write or submit the handoff itself do not
-    count, otherwise any text could vouch for itself), target files must exist, cites must resolve."""
-    records, new_ids = [], []
+def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, traj_ref: str) -> tuple[list, list[str]]:
+    """Turns an Explore/Diagnose handoff into Evidence + Hypothesis records. Returns (records, dropped notes).
+
+    Only claims that can be checked against what really happened enter the state: an evidence item whose command did
+    not run is dropped (and reported), never recorded, and cites that point at dropped or unknown evidence are dropped
+    too. A hypothesis left without verified evidence simply fails the ReadyToPatch gate. Structural problems (bad
+    shape, missing/forbidden/nonexistent target files) still reject the handoff so it can be repaired."""
+    records, dropped = [], []
+    new_ids: list[str | None] = []
     for i, item in enumerate(data.get("evidence") or []):
         cmd = str(item.get("cmd", "")).strip() if isinstance(item, dict) else ""
         if (hit := executed_index(cmd, commands)) is None:
-            raise HandoffError(f"evidence[{i}].cmd was not among the commands you executed: {cmd!r}")
+            dropped.append(f"evidence[{i}] cites a command that was not executed: {cmd[:160]!r}")
+            new_ids.append(None)
+            continue
         records.append(
             Evidence(
-                f"e{len(state.evidence) + i + 1}",
+                f"e{len(state.evidence) + len(records) + 1}",
                 f"{traj_ref}#cmd{hit}",
                 state.repo_revision,
                 str(item.get("note", "")),
@@ -122,13 +143,14 @@ def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, tra
     hyp = data.get("hypothesis")
     if not isinstance(hyp, dict) or not str(hyp.get("text", "")).strip():
         raise HandoffError('handoff needs a "hypothesis" object with non-empty "text"')
-    known = {e.id for e in state.evidence} | set(new_ids)
+    known = {e.id for e in state.evidence} | {i for i in new_ids if i}
     cites = []
     for c in hyp.get("cites") or []:
         cid = new_ids[c] if isinstance(c, int) and not isinstance(c, bool) and 0 <= c < len(new_ids) else c
-        if cid not in known:
-            raise HandoffError(f"hypothesis cites unknown evidence {c!r}")
-        cites.append(cid)
+        if cid in known:
+            cites.append(cid)
+        else:
+            dropped.append(f"hypothesis cite {c!r} points at evidence that is unverified or unknown")
     targets = [str(f) for f in hyp.get("target_files") or []]
     for f in targets:
         if FORBIDDEN_PATH.search(f):
@@ -136,7 +158,7 @@ def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, tra
         if sh(env, f"test -f {shlex.quote(f)}")["returncode"] != 0:
             raise HandoffError(f"target file does not exist in the repository: {f}")
     records.append(Hypothesis(f"h{len(state.hypotheses) + 1}", str(hyp["text"]).strip(), cites, targets))
-    return records
+    return records, dropped
 
 
 REPAIR_PREFIX = """\
@@ -167,7 +189,7 @@ def run_activation(
 ) -> dict:
     """One bounded activation of the frozen worker. Charges the shared budget through `model`."""
     model.begin_activation(cap)
-    template = render_instance_template(mode, has_repro)
+    template = render_instance_template(mode, has_repro, cap or model.budget.max_activation_calls)
     agent = DefaultAgent(
         model,
         env,

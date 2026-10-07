@@ -80,7 +80,7 @@ def main(
     config_spec: list[str] = typer.Option([str(DEFAULT_CONFIG_FILE)], "-c", "--config"),
     max_tokens: int = typer.Option(1_000_000, "--max-tokens", help="Task-level cap on input+output tokens, all modes"),
     max_calls: int = typer.Option(80, "--max-calls"),
-    max_activation_calls: int = typer.Option(12, "--max-activation-calls"),
+    max_activation_calls: int = typer.Option(20, "--max-activation-calls"),
     max_seconds: int = typer.Option(1800, "--max-seconds"),
     redo_existing: bool = typer.Option(False, "--redo-existing"),
     method: str = typer.Option("edac", "--method", help="edac or b0"),

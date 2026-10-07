@@ -136,7 +136,7 @@ def test_evidence_must_cite_a_command_that_really_ran_and_repro_must_fail_at_bas
         }
     )
     metrics, _ = run(repo, lie + lie, Budget(max_calls=len(lie) * 2))
-    assert any("was not among the commands you executed" in e for e in metrics["errors"])
+    assert any("dropped unverifiable claims" in e and "was not executed" in e for e in metrics["errors"])
     passing_repro = [
         step("mkdir -p .edac && printf 'assert True\\n' > .edac/repro.py"),
         step(f"{PY} .edac/repro.py"),
@@ -281,9 +281,13 @@ def test_a_lightly_paraphrased_citation_is_accepted_but_an_unexecuted_part_is_no
 
     metrics, out = run(repo, with_citation("cd . && cat calc.py") + patch(GOOD_FIX))
     assert (metrics["run_status"], metrics["errors"]) == ("local_success", [])
+    subprocess.run("git checkout -q -- . && git clean -fdq", shell=True, cwd=repo, check=True)
     bad = with_citation("cat calc.py && grep -rn never_ran .")
     metrics, _ = run(repo, bad * 2, Budget(max_calls=len(bad) * 2))
-    assert any("was not among the commands you executed" in e for e in metrics["errors"]) and metrics["patches"] == 0
+    assert (
+        any("dropped unverifiable claims" in e and "was not executed" in e for e in metrics["errors"])
+        and metrics["patches"] == 0
+    )
 
 
 def test_repair_prompt_lists_the_real_commands_and_forbids_new_investigation(repo):
@@ -296,3 +300,52 @@ def test_repair_prompt_lists_the_real_commands_and_forbids_new_investigation(rep
         "Do NOT investigate further" in first_user_message
         and "[0] echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in first_user_message
     )
+
+
+def test_unverifiable_evidence_is_dropped_but_verified_evidence_in_the_same_handoff_is_kept(repo):
+    mixed = explore()[:-2] + handoff(
+        {
+            "evidence": [
+                {"cmd": REPRO, "note": "really ran"},
+                {"cmd": "grep -rn secret_answer .", "note": "never ran"},
+            ],
+            "hypothesis": {"text": "add subtracts", "target_files": ["calc.py"], "cites": [0, 1]},
+            "repro_cmd": REPRO,
+        }
+    )
+    metrics, out = run(repo, mixed + patch(GOOD_FIX))
+    state = json.loads((out / "state.json").read_text())
+    assert (metrics["run_status"], [e["id"] for e in state["evidence"]]) == ("local_success", ["e1", "e2"])
+    assert state["hypotheses"][0]["evidence_ids"] == ["e1"]
+    assert any("dropped unverifiable claims" in e for e in metrics["errors"])
+
+
+def test_a_slightly_misquoted_command_is_bound_to_the_nearest_real_one(repo):
+    ran = "grep -n 'def add' calc.py | head -20 && echo done-reading"
+    outputs = [
+        step("mkdir -p .edac && printf 'from calc import add\\nassert add(1, 2) == 3\\n' > .edac/repro.py"),
+        step(ran),
+        *handoff(
+            {
+                "evidence": [
+                    {"cmd": "grep -n 'def add' calc.py | head -30 && echo done-reading", "note": "reads calc"}
+                ],
+                "hypothesis": {"text": "add subtracts", "target_files": ["calc.py"], "cites": [0]},
+                "repro_cmd": REPRO,
+            }
+        ),
+        *patch(GOOD_FIX),
+    ]
+    metrics, out = run(repo, outputs)
+    state = json.loads((out / "state.json").read_text())
+    assert (metrics["run_status"], metrics["errors"], state["evidence"][0]["source"].endswith("#cmd1")) == (
+        "local_success",
+        [],
+        True,
+    )
+
+
+def test_the_worker_is_told_how_many_calls_it_has(repo):
+    _, out = run(repo, explore() + patch(GOOD_FIX), Budget(max_activation_calls=17))
+    first_user = json.loads((out / "trajectories" / "01_Explore.traj.json").read_text())["messages"][1]["content"]
+    assert "at most 17 tool calls" in first_user
