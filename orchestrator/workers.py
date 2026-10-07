@@ -76,13 +76,20 @@ class HandoffError(ValueError):
 
 
 def parse_handoff(text: str) -> dict:
+    """First JSON object in the submission. Raw newlines inside strings are tolerated and text after the object (a stray
+    heredoc terminator or submit command) is ignored, because workers make these mechanical slips constantly."""
     text = re.sub(r"^```[a-z]*\s*|\s*```$", "", text.strip())
+    start = text.find("{")
+    if start < 0:
+        raise HandoffError("handoff contains no JSON object")
     try:
-        data = json.loads(text)
+        data, end = json.JSONDecoder(strict=False).raw_decode(text[start:])
     except json.JSONDecodeError as e:
         raise HandoffError(f"handoff is not valid JSON: {e}")
     if not isinstance(data, dict):
         raise HandoffError("handoff must be a JSON object")
+    if (rest := text[start + end :].strip()).startswith(","):
+        raise HandoffError(f"the JSON object closed too early; text after it was ignored: {rest[:120]!r}")
     return data
 
 

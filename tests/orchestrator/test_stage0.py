@@ -8,7 +8,7 @@ from orchestrator.artifacts import ArtifactState, Evidence, Hypothesis, Patch, T
 from orchestrator.checks import regression_failed
 from orchestrator.events import Event, EventQueue, EventType, derive_event
 from orchestrator.scheduler import Budget, Mode, Scheduler
-from orchestrator.workers import BudgetedModel
+from orchestrator.workers import BudgetedModel, HandoffError, parse_handoff
 
 
 def new_state() -> ArtifactState:
@@ -190,3 +190,22 @@ def test_responses_api_usage_is_read_from_the_top_level():
 )
 def test_regression_means_a_failure_the_clean_base_does_not_have(code, failed, base_code, base_failed, expected):
     assert regression_failed(code, failed, base_code, base_failed) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('{"a": 1}', {"a": 1}),
+        ('```json\n{"a": 1}\n```', {"a": 1}),
+        ('{"a": "line1\nline2"}', {"a": "line1\nline2"}),
+        ('{"a": 1}\nHANDOFF_EOF\necho COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && cat .edac/handoff.json', {"a": 1}),
+    ],
+)
+def test_parse_handoff_tolerates_mechanical_slips(text, expected):
+    assert parse_handoff(text) == expected
+
+
+@pytest.mark.parametrize("text", ["no json here", "[1, 2]", '{"a": 1', '{"evidence": []},"hypothesis": {"text": "x"}}'])
+def test_parse_handoff_still_rejects_what_cannot_be_trusted(text):
+    with pytest.raises(HandoffError):
+        parse_handoff(text)

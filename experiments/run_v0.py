@@ -78,10 +78,11 @@ def main(
     model_class: str | None = typer.Option(None, "--model-class"),
     environment_class: str | None = typer.Option(None, "--environment-class"),
     config_spec: list[str] = typer.Option([str(DEFAULT_CONFIG_FILE)], "-c", "--config"),
-    max_tokens: int = typer.Option(1_000_000, "--max-tokens", help="Task-level cap on input+output tokens, all modes"),
-    max_calls: int = typer.Option(80, "--max-calls"),
+    max_tokens: int = typer.Option(2_000_000, "--max-tokens", help="Task-level cap on input+output tokens, all modes"),
+    max_calls: int = typer.Option(150, "--max-calls"),
     max_activation_calls: int = typer.Option(20, "--max-activation-calls"),
-    max_seconds: int = typer.Option(1800, "--max-seconds"),
+    max_seconds: int = typer.Option(3600, "--max-seconds"),
+    max_check_batches: int = typer.Option(20, "--max-check-batches", help="EDAC only: visible check runs per task"),
     redo_existing: bool = typer.Option(False, "--redo-existing"),
     method: str = typer.Option("edac", "--method", help="edac or b0"),
 ) -> None:
@@ -115,6 +116,7 @@ def main(
                 model_kwargs=config.get("model", {}).get("model_kwargs"),
                 budget={"max_tokens": max_tokens, "max_calls": max_calls, "max_activation_calls": max_activation_calls},
                 max_seconds=max_seconds,
+                max_check_batches=max_check_batches,
             ),
             indent=2,
         )
@@ -148,7 +150,7 @@ def main(
                 )
                 model_obj = get_model(config=config.get("model", {}))
                 if method == "edac":
-                    metrics = run_task(model=model_obj, **common)
+                    metrics = run_task(model=model_obj, max_check_batches=max_check_batches, **common)
                 else:
                     metrics = run_b0_task(model=model_obj, agent_config=config["agent"], **common)
             finally:

@@ -49,9 +49,9 @@ def run_task(
     budget: Budget,
     out_dir: Path,
     python: str = "python",
-    max_check_batches: int = 10,
+    max_check_batches: int = 20,
     check_timeout: int = 180,
-    max_seconds: int = 1800,
+    max_seconds: int = 3600,
 ) -> dict:
     """Runs one task serially (one worker, one candidate patch). Returns the metrics dict that is also saved.
 
