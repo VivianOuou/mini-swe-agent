@@ -5,6 +5,7 @@ import pytest
 from minisweagent.exceptions import FormatError, LimitsExceeded
 from minisweagent.models.test_models import DeterministicModel, make_output
 from orchestrator.artifacts import ArtifactState, Evidence, Hypothesis, Patch, TestResult
+from orchestrator.checks import regression_failed
 from orchestrator.events import Event, EventQueue, EventType, derive_event
 from orchestrator.scheduler import Budget, Mode, Scheduler
 from orchestrator.workers import BudgetedModel
@@ -114,11 +115,9 @@ def test_scheduler_maps_modes_stops_on_stall_budget_and_solved(tmp_path):
 
 
 def test_budget_is_shared_across_mode_switches_and_never_resets():
-    budget = Budget(max_tokens=1_000, max_calls=80, max_activation_calls=2)
+    budget = Budget(max_tokens=1_000, max_calls=80, max_activation_calls=2, reserve_tokens=100)
     model = BudgetedModel(
-        DeterministicModel(outputs=[usage_output(300), usage_output(300), usage_output(300), usage_output(300)]),
-        budget,
-        reserve_tokens=100,
+        DeterministicModel(outputs=[usage_output(300), usage_output(300), usage_output(300), usage_output(300)]), budget
     )
     model.begin_activation()
     model.query([])
@@ -131,12 +130,25 @@ def test_budget_is_shared_across_mode_switches_and_never_resets():
 
 
 def test_reserve_blocks_a_call_that_could_overshoot():
-    budget = Budget(max_tokens=1_000)
-    model = BudgetedModel(DeterministicModel(outputs=[usage_output(900), usage_output(50)]), budget, reserve_tokens=200)
+    budget = Budget(max_tokens=1_000, reserve_tokens=200)
+    model = BudgetedModel(DeterministicModel(outputs=[usage_output(900), usage_output(50)]), budget)
     model.query([])
     with pytest.raises(LimitsExceeded):
         model.query([])
     assert (budget.tokens, budget.calls) == (900, 1)
+
+
+def test_the_prompt_about_to_be_sent_counts_against_the_cap_not_only_the_reserve():
+    budget = Budget(max_tokens=1_000, reserve_tokens=100)
+    model = BudgetedModel(DeterministicModel(outputs=[usage_output(50)]), budget)
+    with pytest.raises(LimitsExceeded):
+        model.query([{"role": "user", "content": "x" * 4_000}])  # ~1000 prompt tokens cannot fit under the cap
+    assert (budget.tokens, budget.calls) == (0, 0)
+
+
+def test_budget_exhausted_agrees_with_what_the_wrapper_refuses():
+    budget = Budget(max_tokens=100_000, reserve_tokens=4_096, tokens=97_000)
+    assert (budget.exhausted, budget.can_call(0, 0)) == (True, False)
 
 
 def test_format_errors_and_missing_usage_are_still_charged():
@@ -153,7 +165,8 @@ def test_format_errors_and_missing_usage_are_still_charged():
     with pytest.raises(FormatError):
         model.query([])
     model.query([])
-    assert (budget.tokens, budget.calls, budget.estimated_calls) == (200, 2, 1)
+    assert (budget.calls, budget.estimated_calls) == (2, 1)
+    assert budget.tokens >= 100 + 100  # the FormatError's real usage plus at least the 400-char reply
 
 
 def test_responses_api_usage_is_read_from_the_top_level():
@@ -162,3 +175,18 @@ def test_responses_api_usage_is_read_from_the_top_level():
     budget = Budget()
     BudgetedModel(DeterministicModel(outputs=[out]), budget).query([])
     assert (budget.tokens, budget.estimated_calls) == (1000, 0)
+
+
+@pytest.mark.parametrize(
+    ("code", "failed", "base_code", "base_failed", "expected"),
+    [
+        (0, set(), 1, {"a"}, False),
+        (1, {"a"}, 1, {"a"}, False),
+        (1, {"a", "b"}, 1, {"a"}, True),
+        (1, {"a"}, 0, set(), True),
+        (2, set(), 0, set(), True),
+        (2, set(), 1, {"a"}, True),
+    ],
+)
+def test_regression_means_a_failure_the_clean_base_does_not_have(code, failed, base_code, base_failed, expected):
+    assert regression_failed(code, failed, base_code, base_failed) is expected

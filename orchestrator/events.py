@@ -37,7 +37,10 @@ class Event:
 
 
 def derive_event(state: ArtifactState, required: tuple[str, ...] = REQUIRED_CHECKS) -> Event | None:
-    """Return the event implied by the current state, or None while a candidate patch awaits its checks."""
+    """Return the event implied by the current state, or None while a candidate patch awaits its checks.
+
+    The fingerprint identifies a failure, not a hypothesis: the same failure with the same amount of evidence repeats the
+    fingerprint however often the hypothesis is rewritten, which is what the scheduler's no-progress stop counts."""
     patch = state.get(state.patches, state.active_patch_id)
     hyp = state.get(state.hypotheses, state.active_hypothesis_id)
     n_evidence = len(state.evidence)
@@ -52,15 +55,15 @@ def derive_event(state: ArtifactState, required: tuple[str, ...] = REQUIRED_CHEC
             if r.patch_id == patch.id and r.tested_revision == state.repo_revision
         }
         if not patch.applied:
-            return event(EventType.PATCH_FAILED, hyp.id, "apply")
+            return event(EventType.PATCH_FAILED, "apply")
         if failed := next((r for r in latest.values() if r.exit_code != 0), None):
-            return event(EventType.PATCH_FAILED, hyp.id, failed.scope, failed.exit_code)
+            return event(EventType.PATCH_FAILED, failed.scope, failed.exit_code)
         if all(scope in latest for scope in required):
             return event(EventType.SOLVED, patch.id)
         return None
     if hyp and hyp.evidence_ids and hyp.target_files:
         return event(EventType.READY_TO_PATCH, hyp.id)
-    return event(EventType.NEED_EVIDENCE, hyp.id if hyp else "init")
+    return event(EventType.NEED_EVIDENCE, "need")
 
 
 class EventQueue:

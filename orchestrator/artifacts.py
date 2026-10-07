@@ -58,6 +58,10 @@ class ArtifactState:
     test_results: list[TestResult] = field(default_factory=list)
     active_hypothesis_id: str = ""
     active_patch_id: str = ""
+    checks: dict = field(default_factory=dict)
+    """Frozen visible acceptance commands by scope, e.g. {"repro": "python .edac/repro.py"}."""
+    unresolved_questions: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
     state_version: int = 0
     budget_used: dict = field(default_factory=dict)
     run_status: str = "active"

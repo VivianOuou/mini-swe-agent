@@ -27,26 +27,32 @@ class Budget:
     max_tokens: int = 100_000
     max_calls: int = 80
     max_activation_calls: int = 12
+    reserve_tokens: int = 4096
+    """Completion allowance that must still fit under max_tokens before another call is allowed."""
     tokens: int = 0
     calls: int = 0
     estimated_calls: int = 0
     """Calls whose usage was missing from the provider response and was estimated instead."""
+    cost_usd: float = 0.0
 
-    def can_call(self, reserve_tokens: int, activation_calls: int) -> bool:
+    def can_call(self, pending_tokens: int, activation_calls: int, activation_cap: int | None = None) -> bool:
+        """pending_tokens is the estimated size of the prompt about to be sent."""
         return (
             self.calls < self.max_calls
-            and self.tokens + reserve_tokens <= self.max_tokens
-            and activation_calls < self.max_activation_calls
+            and self.tokens + pending_tokens + self.reserve_tokens <= self.max_tokens
+            and activation_calls < (activation_cap or self.max_activation_calls)
         )
 
-    def charge(self, tokens: int, estimated: bool = False) -> None:
+    def charge(self, tokens: int, estimated: bool = False, cost_usd: float = 0.0) -> None:
         self.tokens += tokens
         self.calls += 1
         self.estimated_calls += estimated
+        self.cost_usd += cost_usd
 
     @property
     def exhausted(self) -> bool:
-        return self.calls >= self.max_calls or self.tokens >= self.max_tokens
+        """Same predicate as can_call with an empty prompt, so the stop reason matches why calls are refused."""
+        return not self.can_call(0, 0)
 
 
 @dataclass
