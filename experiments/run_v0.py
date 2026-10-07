@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-"""Run EDAC V0 (ArtifactState + four-event rule scheduler) on SWE-bench instances, serially, one worker at a time.
+"""Run EDAC V0 (ArtifactState + four-event rule scheduler) or the B0 baseline (--method b0) on SWE-bench instances.
+
+Both methods run serially, one worker at a time, under the same task-level budget, budget wrapper and patch extraction.
 
 Usage: PYTHONPATH=. python experiments/run_v0.py --slice 0:5 -m openai/gpt-5.4-mini-2026-03-17 --model-class litellm_response \
     --environment-class singularity -o results/edac_v0_mini -c swebench.yaml -c experiments/configs/singularity_testbed.yaml
@@ -32,6 +34,7 @@ from minisweagent.run.benchmarks.swebench import (
 )
 from minisweagent.utils.serialize import UNSET, recursive_merge
 from orchestrator import checks, events
+from orchestrator.baseline import run_b0_task
 from orchestrator.runner import run_task
 from orchestrator.scheduler import Budget
 
@@ -80,7 +83,9 @@ def main(
     max_activation_calls: int = typer.Option(12, "--max-activation-calls"),
     max_seconds: int = typer.Option(1800, "--max-seconds"),
     redo_existing: bool = typer.Option(False, "--redo-existing"),
+    method: str = typer.Option("edac", "--method", help="edac or b0"),
 ) -> None:
+    assert method in ("edac", "b0"), method
     output.mkdir(parents=True, exist_ok=True)
     instances = filter_instances(
         list(load_dataset(DATASET_MAPPING.get(subset, subset), split=split)),
@@ -102,6 +107,7 @@ def main(
                 slice=slice_spec,
                 filter=filter_spec,
                 instance_ids=[i["instance_id"] for i in instances],
+                method=method,
                 model=model,
                 model_class=model_class,
                 environment_class=environment_class,
@@ -127,17 +133,24 @@ def main(
         try:
             env = get_sb_environment(config, instance)
             try:
-                metrics = run_task(
+                budget = Budget(
+                    max_tokens=max_tokens,
+                    max_calls=max_calls,
+                    max_activation_calls=max_activation_calls if method == "edac" else max_calls,
+                )
+                common = dict(
                     task_id=iid,
                     issue=instance["problem_statement"],
                     env=env,
-                    model=get_model(config=config.get("model", {})),
-                    budget=Budget(
-                        max_tokens=max_tokens, max_calls=max_calls, max_activation_calls=max_activation_calls
-                    ),
+                    budget=budget,
                     out_dir=output / iid,
                     max_seconds=max_seconds,
                 )
+                model_obj = get_model(config=config.get("model", {}))
+                if method == "edac":
+                    metrics = run_task(model=model_obj, **common)
+                else:
+                    metrics = run_b0_task(model=model_obj, agent_config=config["agent"], **common)
             finally:
                 env.cleanup()
         except Exception:

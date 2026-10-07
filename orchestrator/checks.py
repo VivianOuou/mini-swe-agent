@@ -41,6 +41,25 @@ def source_diff(env, base: str = "HEAD") -> str:
     return sh(env, f"{INTENT_TO_ADD} && git diff {shlex.quote(base)}")["output"]
 
 
+FINAL_PATCH_EXCLUDES = [
+    "tests/**",
+    "test/**",
+    "test_*.py",
+    "*_test.py",
+    "conftest.py",
+    "setup.py",
+    "setup.cfg",
+    "pyproject.toml",
+    "tox.ini",
+]
+
+
+def final_patch(env, base: str = "HEAD") -> str:
+    """The patch-extraction rule shared by every method: working tree vs the base commit, minus tests and config files."""
+    excludes = " ".join(shlex.quote(f":(exclude,glob)**/{g}") for g in FINAL_PATCH_EXCLUDES)
+    return sh(env, f"{INTENT_TO_ADD} && git diff {shlex.quote(base)} -- . {excludes}")["output"]
+
+
 def changed_files(env, base: str = "HEAD") -> list[str]:
     return sh(env, f"{INTENT_TO_ADD} && git diff {shlex.quote(base)} --name-only")["output"].split()
 
