@@ -275,3 +275,38 @@ def test_diagnose_cannot_edit_production_code_while_a_patch_is_applied(repo):
     metrics, _ = run(repo, outputs, Budget(max_calls=len(outputs)))
     assert "Diagnose modified source files; changes reverted" in metrics["errors"]
     assert (repo / "calc.py").read_text() == "def add(a, b):\n    return a * b\n"
+
+
+def test_a_lightly_paraphrased_citation_is_accepted_but_an_unexecuted_part_is_not(repo):
+    ran = "cd . && pwd && cat calc.py"
+
+    def with_citation(cmd: str) -> list[dict]:
+        return [
+            step("mkdir -p .edac && printf 'from calc import add\\nassert add(1, 2) == 3\\n' > .edac/repro.py"),
+            step(ran),
+            *handoff(
+                {
+                    "evidence": [{"cmd": cmd, "note": "reads calc"}],
+                    "hypothesis": {"text": "add subtracts", "target_files": ["calc.py"], "cites": [0]},
+                    "repro_cmd": REPRO,
+                }
+            ),
+        ]
+
+    metrics, out = run(repo, with_citation("cd . && cat calc.py") + patch(GOOD_FIX))
+    assert (metrics["run_status"], metrics["errors"]) == ("local_success", [])
+    bad = with_citation("cat calc.py && grep -rn never_ran .")
+    metrics, _ = run(repo, bad * 2, Budget(max_calls=len(bad) * 2))
+    assert any("was not among the commands you executed" in e for e in metrics["errors"]) and metrics["patches"] == 0
+
+
+def test_repair_prompt_lists_the_real_commands_and_forbids_new_investigation(repo):
+    bad = [step("echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT && echo 'not json'")]
+    _, out = run(repo, bad * 4)
+    first_user_message = json.loads((out / "trajectories" / "01_Explore_repair.traj.json").read_text())["messages"][1][
+        "content"
+    ]
+    assert (
+        "Do NOT investigate further" in first_user_message
+        and "[0] echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT" in first_user_message
+    )

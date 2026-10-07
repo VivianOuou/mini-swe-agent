@@ -85,6 +85,22 @@ def parse_handoff(text: str) -> dict:
     return data
 
 
+def executed_index(cmd: str, commands: list[str]) -> int | None:
+    """Index of the executed command that vouches for `cmd`, or None.
+
+    Workers paraphrase a little (dropping `pwd &&`, re-quoting), so `cmd` is split on && and ; and every non-trivial
+    part must occur in a command that really ran. A part nobody ran, or a command that merely writes or submits the
+    handoff file, never counts.
+    """
+    real = [(k, c) for k, c in enumerate(commands) if "handoff.json" not in c]
+    parts = [p for p in (x.strip() for x in re.split(r"&&|;", cmd)) if p and not re.fullmatch(r"cd\s+\S+", p)]
+    long_parts = [p for p in parts if len(p) >= 4]
+    if not long_parts:
+        return next((k for k, c in reversed(real) if c.strip() == cmd and cmd), None)
+    hits = [next((k for k, c in reversed(real) if p in c), None) for p in long_parts]
+    return None if None in hits else max(hits)
+
+
 def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, traj_ref: str) -> list:
     """Turns an Explore/Diagnose handoff into Evidence + Hypothesis records. Every claim is checked against what
     really happened: cited commands must have been executed (commands that write or submit the handoff itself do not
@@ -92,15 +108,7 @@ def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, tra
     records, new_ids = [], []
     for i, item in enumerate(data.get("evidence") or []):
         cmd = str(item.get("cmd", "")).strip() if isinstance(item, dict) else ""
-        hit = next(
-            (
-                k
-                for k in reversed(range(len(commands)))
-                if len(cmd) >= 6 and cmd in commands[k] and "handoff.json" not in commands[k]
-            ),
-            None,
-        )
-        if hit is None:
+        if (hit := executed_index(cmd, commands)) is None:
             raise HandoffError(f"evidence[{i}].cmd was not among the commands you executed: {cmd!r}")
         records.append(
             Evidence(
@@ -134,9 +142,12 @@ def bind_handoff(data: dict, state: ArtifactState, commands: list[str], env, tra
 REPAIR_PREFIX = """\
 <repair>
 Your previous handoff was rejected by the system: {{repair_error}}
+Do NOT investigate further and do not run other commands. Only fix the handoff JSON and submit it again with the
+two-step sequence (you have at most 3 tool calls). When citing evidence, copy a command EXACTLY (or a prefix of it) from
+this list of the commands you actually executed:
+{{repair_commands}}
 Previous handoff:
 {{repair_raw}}
-You may run more commands if needed, then hand off again. Commands from your previous session still count as executed.
 </repair>
 
 """
@@ -152,7 +163,7 @@ def run_activation(
     has_repro: bool,
     traj_path: Path,
     cap: int | None = None,
-    repair: tuple[str, str] | None = None,
+    repair: tuple[str, str, list[str]] | None = None,
 ) -> dict:
     """One bounded activation of the frozen worker. Charges the shared budget through `model`."""
     model.begin_activation(cap)
@@ -166,8 +177,15 @@ def run_activation(
         cost_limit=0,
         output_path=traj_path,
     )
+    listed = (
+        "\n".join(f"  [{i}] {c[:300]}" for i, c in enumerate(repair[2]) if "handoff.json" not in c) if repair else ""
+    )
     info = agent.run(
-        task, state_view=view, repair_error=repair[0] if repair else "", repair_raw=repair[1] if repair else ""
+        task,
+        state_view=view,
+        repair_error=repair[0] if repair else "",
+        repair_raw=repair[1] if repair else "",
+        repair_commands=listed,
     )
     commands = [a["command"] for m in agent.messages for a in m.get("extra", {}).get("actions", [])]
     return {"exit_status": info.get("exit_status", ""), "submission": info.get("submission", ""), "commands": commands}

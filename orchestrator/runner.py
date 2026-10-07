@@ -147,7 +147,7 @@ def run_task(
                 break
             stats["repairs"] += 1
             before = source_diff(env, state.base_commit)
-            last, ref2 = activate(mode, repair=(errors[-1], raw), suffix="_repair")
+            last, ref2 = activate(mode, repair=(errors[-1], raw, commands), suffix="_repair")
             contain(mode, before)
             commands, raw, ref = commands + last["commands"], last["submission"], f"{ref}+{ref2}"
         if error := " -> after repair: ".join(errors):
